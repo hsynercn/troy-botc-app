@@ -1,0 +1,10 @@
+{
+  "expo": {
+    "name": "Troy BotC",
+    "slug": "troy-botc",
+    "version": "1.0.0",
+    "scheme": "troybotc",
+    "web": { "bundler": "metro" },
+    "plugins": ["expo-router"]
+  }
+}
