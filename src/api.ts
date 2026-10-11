@@ -1,4 +1,4 @@
-import type { GameNight, Leaderboard, Player, Participation } from './types';
+import type { GameNight, Leaderboard, Player, Participation, RosterEntry, UserSearchResult } from './types';
 import { getIdToken } from './firebase';
 
 export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'https://x7u8a70xx0.execute-api.us-east-1.amazonaws.com/dev';
@@ -19,7 +19,8 @@ const demoNights: GameNight[] = [
 ];
 const demoPlayer: Player = { id: 'player-1', email: 'you@example.com', displayName: 'Hüseyin', role: 'ORGANIZER', rank: { attendedGameCount: 7, currentRank: ranks(7), nextRank: { ...ranks(10), minAttendedGames: 10, ordinal: 3, title: 'Librarian' }, gamesUntilNextRank: 3 } };
 
-let demoRsvps = new Set(['night-1']);
+const demoUsers: UserSearchResult[] = [{ id: 'player-2', displayName: 'Merve' }, { id: 'player-3', displayName: 'Can' }];
+let demoRegistrations = new Set([demoPlayer.id]);
 export async function request<T>(path: string, options: RequestInit = {}, token?: string): Promise<T> {
   if (DEMO_MODE) return demoRequest<T>(path, options);
   const bearer = token ?? await getIdToken();
@@ -37,9 +38,32 @@ export async function request<T>(path: string, options: RequestInit = {}, token?
 async function demoRequest<T>(path: string, options: RequestInit): Promise<T> {
   await new Promise((resolve) => setTimeout(resolve, 180));
   if (path === '/v1/me') return demoPlayer as T;
-  if (path === '/v1/game-nights') return demoNights.map((n) => ({ ...n, participantCount: n.participantCount + (demoRsvps.has(n.id) && n.id !== 'night-1' ? 1 : 0) })) as T;
-  if (path.startsWith('/v1/game-nights/') && path.endsWith('/participation')) { const id = path.split('/')[3]; if (options.method === 'DELETE') demoRsvps.delete(id); else demoRsvps.add(id); return { gameNightId: id, playerId: demoPlayer.id, status: demoRsvps.has(id) ? 'RSVPED' : 'CANCELLED' } as T; }
+  if (path.match(/^\/v1\/game-nights\/[^/]+$/) && options.method !== 'PATCH') {
+    const id = path.split('/').pop()!;
+    return demoNights.find((night) => night.id === id) as T;
+  }
+  if (path === '/v1/game-nights') return demoNights.map((n) => ({ ...n, participantCount: n.participantCount + (demoRegistrations.has(n.id) && n.id !== 'night-1' ? 1 : 0) })) as T;
+  if (path.match(/^\/v1\/game-nights\/[^/]+\/roster$/)) return Array.from(demoRegistrations).map((playerId, index): RosterEntry => {
+    const user = [demoPlayer, ...demoUsers].find((item) => item.id === playerId);
+    if (!user) throw new ApiError(400, 'Player is not an active community user');
+    return { id: `demo-registration-${index}`, gameNightId: path.split('/')[3], playerId, displayName: user.displayName, status: 'REGISTERED', joinedAt: new Date().toISOString() };
+  }) as T;
+  if (path.startsWith('/v1/users/search')) return demoUsers as T;
   if (path === '/v1/leaderboard') return { viewerPosition: 4, entries: [{ playerId: 'p1', displayName: 'Merve', rank: { attendedGameCount: 14, currentRank: ranks(14), gamesUntilNextRank: 0 } }, { playerId: 'p2', displayName: 'Can', rank: { attendedGameCount: 10, currentRank: ranks(10), gamesUntilNextRank: 0 } }, { playerId: 'p3', displayName: 'Deniz', rank: { attendedGameCount: 8, currentRank: ranks(8), gamesUntilNextRank: 2 } }, { playerId: demoPlayer.id, displayName: demoPlayer.displayName, rank: demoPlayer.rank }] } as T;
+  if (options.method === 'PATCH' && path.match(/^\/v1\/game-nights\/[^/]+$/)) {
+    const id = path.split('/').pop()!;
+    const night = demoNights.find((item) => item.id === id)!;
+    Object.assign(night, JSON.parse(String(options.body)));
+    return night as T;
+  }
+  if (options.method === 'DELETE' && path.match(/^\/v1\/game-nights\/[^/]+\/registrations\/[^/]+$/)) {
+    demoRegistrations.delete(path.split('/').pop()!);
+    return undefined as T;
+  }
+  if (options.method === 'POST' && path.endsWith('/registrations')) {
+    const body = JSON.parse(String(options.body)) as { playerIds: string[] };
+    body.playerIds.forEach((playerId) => demoRegistrations.add(playerId));
+  }
   return {} as T;
 }
-export const api = { me: (token?: string) => request<Player>('/v1/me', {}, token), nights: (token?: string) => request<GameNight[]>('/v1/game-nights', {}, token), leaderboard: (token?: string) => request<Leaderboard>('/v1/leaderboard', {}, token), join: (id: string, token?: string) => request<Participation>(`/v1/game-nights/${id}/participation`, { method: 'POST' }, token), leave: (id: string, token?: string) => request<void>(`/v1/game-nights/${id}/participation`, { method: 'DELETE' }, token) };
+export const api = { me: (token?: string) => request<Player>('/v1/me', {}, token), nights: (token?: string) => request<GameNight[]>('/v1/game-nights', {}, token), night: (id: string, token?: string) => request<GameNight>(`/v1/game-nights/${id}`, {}, token), updateNight: (id: string, update: Partial<Omit<GameNight, 'id' | 'createdBy' | 'participantCount' | 'status'>>, token?: string) => request<GameNight>(`/v1/game-nights/${id}`, { method: 'PATCH', body: JSON.stringify(update) }, token), roster: (id: string, token?: string) => request<RosterEntry[]>(`/v1/game-nights/${id}/roster`, {}, token), leaderboard: (token?: string) => request<Leaderboard>('/v1/leaderboard', {}, token), searchUsers: (query = '', token?: string) => request<UserSearchResult[]>(`/v1/users/search?q=${encodeURIComponent(query)}`, {}, token), register: (id: string, playerIds: string[], token?: string) => request<Participation[]>(`/v1/game-nights/${id}/registrations`, { method: 'POST', body: JSON.stringify({ playerIds }) }, token), removeRegistration: (id: string, playerId: string, token?: string) => request<void>(`/v1/game-nights/${id}/registrations/${playerId}`, { method: 'DELETE' }, token) };
