@@ -4,7 +4,7 @@ import { useRouter } from 'expo-router';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/src/api';
 import { auth, onAuthStateChanged, signOut } from '@/src/firebase';
-import type { GameNight } from '@/src/types';
+import type { AttendanceStatus, GameNight, Player } from '@/src/types';
 import { colors, styles } from '@/src/styles';
 import { LanguageSwitcher, useLanguage } from '@/src/i18n';
 
@@ -104,12 +104,80 @@ function ParticipantManager({ night, canManage, onRefresh }: { night: GameNight;
 		{remove.isError ? <Text accessibilityRole="alert" style={{ color: colors.red, marginTop: 10 }}>{remove.error.message}</Text> : null}
 	</View>;
 }
-function NightDetails({ night, canManage, onBack, onRefresh }: { night: GameNight; canManage: boolean; onBack: () => void; onRefresh: () => Promise<unknown> }) {
+function AttendanceManager({ night, actor, onRefresh }: { night: GameNight; actor: Player; onRefresh: () => Promise<unknown> }) {
+	const { t } = useLanguage();
+	const roster = useQuery({ queryKey: ['roster', night.id], queryFn: () => api.roster(night.id) });
+	const [selected, setSelected] = useState<Record<string, AttendanceStatus>>({});
+	const isAdmin = actor.role === 'ADMIN';
+	const canComplete = night.status === 'PUBLISHED'
+		&& (isAdmin || (actor.role === 'ORGANIZER' && night.createdBy === actor.id));
+	const canCorrect = night.status === 'COMPLETED' && isAdmin;
+	const eligible = (roster.data ?? []).filter((participant) => participant.status !== 'CANCELLED');
+	const statusFor = (playerId: string, status: string): AttendanceStatus | undefined =>
+		selected[playerId] ?? (canCorrect && (status === 'ATTENDED' || status === 'NO_SHOW') ? status : undefined);
+	const complete = eligible.every((participant) => statusFor(participant.playerId, participant.status) !== undefined);
+	const mutation = useMutation({
+		mutationFn: () => api.recordAttendance(night.id, eligible.map((participant) => ({
+			playerId: participant.playerId,
+			status: statusFor(participant.playerId, participant.status)!,
+		}))),
+		onSuccess: onRefresh,
+		onError: onRefresh,
+	});
+	if (!canComplete && !canCorrect) return null;
+	return <View style={[styles.card, { marginTop: 14 }]}>
+		<Text style={{ color: colors.ink, fontWeight: '800', fontSize: 17 }}>{t(canCorrect ? 'attendance.correct' : 'attendance.manage')}</Text>
+		<Text style={[styles.subtitle, { marginTop: 8 }]}>{t('attendance.help')}</Text>
+		{roster.isLoading ? <ActivityIndicator color={colors.green} style={{ marginTop: 12 }} /> : null}
+		{roster.isError ? <Text accessibilityRole="alert" style={{ color: colors.red, marginTop: 10 }}>{roster.error.message}</Text> : null}
+		{!roster.isLoading && !roster.isError && eligible.length === 0 ? <Text style={[styles.subtitle, { marginTop: 12 }]}>{t('attendance.emptyRoster')}</Text> : null}
+		{!roster.isLoading && !roster.isError ? eligible.map((participant) => {
+			const selectedStatus = statusFor(participant.playerId, participant.status);
+			return <View key={participant.playerId} style={{ paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: colors.line }}>
+				<Text style={{ color: colors.ink, fontWeight: '700' }}>{participant.displayName}</Text>
+				<View style={[styles.row, { gap: 8, marginTop: 8 }]}>
+					{(['ATTENDED', 'NO_SHOW'] as const).map((status) => {
+						const checked = selectedStatus === status;
+						return <Pressable key={status} accessibilityRole="radio" accessibilityState={{ checked, disabled: mutation.isPending }} disabled={mutation.isPending} onPress={() => setSelected((current) => ({ ...current, [participant.playerId]: status }))} style={[styles.secondaryButton, { borderRadius: 999, paddingHorizontal: 12, paddingVertical: 8 }, checked && { backgroundColor: colors.green }]}>
+							<Text style={[styles.secondaryText, checked && { color: colors.white }]}>{t(status === 'ATTENDED' ? 'attendance.attended' : 'attendance.noShow')}</Text>
+						</Pressable>;
+					})}
+				</View>
+			</View>;
+		}) : null}
+		{mutation.isError ? <Text accessibilityRole="alert" style={{ color: colors.red, marginTop: 10 }}>{mutation.error.message}</Text> : null}
+		<Pressable accessibilityRole="button" disabled={mutation.isPending || roster.isLoading || roster.isError || !complete} onPress={() => mutation.mutate()} style={[styles.button, { marginTop: 14 }, (mutation.isPending || roster.isLoading || roster.isError || !complete) && { opacity: 0.5 }]}>
+			<Text style={styles.buttonText}>{mutation.isPending ? t('common.working') : t(canCorrect ? 'attendance.saveCorrections' : 'attendance.complete')}</Text>
+		</Pressable>
+	</View>;
+}
+function NightDetails({ night, canManage, actor, onBack, onRefresh }: { night: GameNight; canManage: boolean; actor: Player; onBack: () => void; onRefresh: () => Promise<unknown> }) {
 	const { t } = useLanguage();
 	const [current, setCurrent] = useState(night);
 	useEffect(() => setCurrent(night), [night]);
 	const canEdit = canManage && (current.status === 'DRAFT' || current.status === 'PUBLISHED');
-	return <><Pressable onPress={onBack} style={{ marginBottom: 18 }}><Text style={{ color: colors.green, fontWeight: '800' }}>← {t('night.back')}</Text></Pressable><Text style={styles.eyebrow}>{current.status}</Text><Text style={[styles.title, { marginTop: 7 }]}>{current.title}</Text><NightCard night={current} onRefresh={onRefresh} /><ParticipantManager night={current} canManage={canEdit} onRefresh={onRefresh} />{canEdit ? <><RegistrationManager night={current} onRefresh={onRefresh} /><SessionEditor night={current} onSaved={(updated) => { setCurrent(updated); onRefresh(); }} /></> : null}</>;
+	const canPublish = current.status === 'DRAFT'
+		&& (actor.role === 'ADMIN' || (actor.role === 'ORGANIZER' && current.createdBy === actor.id));
+	const publish = useMutation({
+		mutationFn: () => api.publishNight(current.id),
+		onSuccess: async (published) => { setCurrent(published); await onRefresh(); },
+		onError: onRefresh,
+	});
+	return <>
+		<Pressable onPress={onBack} style={{ marginBottom: 18 }}><Text style={{ color: colors.green, fontWeight: '800' }}>← {t('night.back')}</Text></Pressable>
+		<Text style={styles.eyebrow}>{current.status}</Text>
+		<Text style={[styles.title, { marginTop: 7 }]}>{current.title}</Text>
+		{canPublish ? <View style={[styles.card, { marginTop: 14 }]}>
+			{publish.isError ? <Text accessibilityRole="alert" style={{ color: colors.red, marginBottom: 10 }}>{publish.error.message}</Text> : null}
+			<Pressable accessibilityRole="button" disabled={publish.isPending} onPress={() => publish.mutate()} style={[styles.button, publish.isPending && { opacity: 0.6 }]}>
+				<Text style={styles.buttonText}>{publish.isPending ? t('common.working') : t('night.publish')}</Text>
+			</Pressable>
+		</View> : null}
+		<AttendanceManager night={current} actor={actor} onRefresh={onRefresh} />
+		<NightCard night={current} onRefresh={onRefresh} />
+		<ParticipantManager night={current} canManage={canEdit} onRefresh={onRefresh} />
+		{canEdit ? <><RegistrationManager night={current} onRefresh={onRefresh} /><SessionEditor night={current} onSaved={(updated) => { setCurrent(updated); onRefresh(); }} /></> : null}
+	</>;
 }
 function Overview({ go, enabled }: { go: (tab: string) => void; enabled: boolean }) { const { t } = useLanguage(); const queryClient = useQueryClient(); const nights = useQuery({ queryKey: ['nights'], queryFn: () => api.nights(), enabled }); const player = useQuery({ queryKey: ['me'], queryFn: () => api.me(), enabled }); if (!enabled || nights.isLoading || player.isLoading) return <ActivityIndicator color={colors.green} size="large" />; if (nights.isError || player.isError) return <ErrorState error={nights.error ?? player.error} />; const p = player.data!; return <><View style={[styles.between, { marginBottom: 24 }]}><View><Text style={styles.eyebrow}>{t('home.greeting', { name: p.displayName.toUpperCase() })}</Text><Text style={[styles.title, { marginTop: 7 }]}>{t('home.title')}</Text></View><Pressable onPress={() => go('profile')} style={{ backgroundColor: colors.mint, width: 44, height: 44, borderRadius: 22, justifyContent: 'center', alignItems: 'center' }}><Text style={{ color: colors.green, fontWeight: '900' }}>{p.displayName[0]}</Text></Pressable></View><View style={[styles.card, { backgroundColor: colors.green, marginBottom: 26 }]}><Text style={{ color: '#b9dfc5', fontWeight: '800' }}>{t('home.rank')}</Text><Text style={{ color: colors.white, fontSize: 28, fontWeight: '800', marginTop: 8 }}>{p.rank.currentRank.title}</Text><Text style={{ color: '#d4edda', marginTop: 6 }}>{p.rank.attendedGameCount} · {p.rank.gamesUntilNextRank ? t('home.until', { count: p.rank.gamesUntilNextRank, rank: p.rank.nextRank?.title ?? '' }) : t('home.topRank')}</Text><View style={{ height: 7, backgroundColor: '#477b62', borderRadius: 8, marginTop: 18 }}><View style={{ height: 7, width: `${Math.min(100, p.rank.attendedGameCount * 10)}%`, backgroundColor: colors.gold, borderRadius: 8 }} /></View></View><View style={[styles.between, { marginBottom: 13 }]}><Text style={{ color: colors.ink, fontSize: 21, fontWeight: '800' }}>{t('home.upcoming')}</Text><Pressable onPress={() => go('nights')}><Text style={{ color: colors.green, fontWeight: '800' }}>{t('common.seeAll')}</Text></Pressable></View>{nights.data!.filter((n) => n.status !== 'CANCELLED').slice(0, 2).map((night) => <NightCard key={night.id} night={night} onDetails={() => go('nights')} onRefresh={() => queryClient.invalidateQueries({ queryKey: ['nights'] })} />)}</>; }
 function ErrorState({ error }: { error: Error | null }) { const router = useRouter(); const { t } = useLanguage(); const unauthorized = error?.message === 'Authentication required'; return <View style={[styles.card, { marginTop: 20 }]}><Text style={{ color: colors.ink, fontSize: 18, fontWeight: '800' }}>{unauthorized ? t('error.expired') : t('error.load')}</Text><Text style={[styles.subtitle, { marginTop: 8 }]}>{unauthorized ? t('error.signIn') : error?.message ?? t('error.try')}</Text><Pressable onPress={() => unauthorized ? router.replace('/login') : undefined} style={[styles.button, { marginTop: 16 }]}><Text style={styles.buttonText}>{unauthorized ? t('error.login') : t('error.retry')}</Text></Pressable></View>; }
@@ -153,7 +221,7 @@ function NightsList() {
 		await queryClient.invalidateQueries({ queryKey: ['nights'] });
 	}} />;
 	const selected = query.data!.find((night) => night.id === selectedId) ?? (createdNight?.id === selectedId ? createdNight : null);
-	if (selected) return <NightDetails night={selected} canManage={canManage} onBack={() => { setSelectedId(null); setCreatedNight(null); }} onRefresh={() => Promise.all([queryClient.invalidateQueries({ queryKey: ['nights'] }), queryClient.invalidateQueries({ queryKey: ['roster', selected.id] })])} />;
+	if (selected) return <NightDetails night={selected} canManage={canManage} actor={player.data!} onBack={() => { setSelectedId(null); setCreatedNight(null); }} onRefresh={() => Promise.all([queryClient.invalidateQueries({ queryKey: ['nights'] }), queryClient.invalidateQueries({ queryKey: ['roster', selected.id] }), queryClient.invalidateQueries({ queryKey: ['me'] }), queryClient.invalidateQueries({ queryKey: ['leaderboard'] })])} />;
 	return <>
 		{canManage ? <Pressable accessibilityRole="button" onPress={() => setCreating(true)} style={[styles.button, { marginBottom: 20 }]}><Text style={styles.buttonText}>{t('night.create')}</Text></Pressable> : null}
 		{query.data!.length === 0 ? <Text style={[styles.subtitle, { marginBottom: 14 }]}>{t('night.empty')}</Text> : null}

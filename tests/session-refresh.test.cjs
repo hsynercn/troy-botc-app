@@ -14,6 +14,15 @@ function findElement(node, name) {
   }
 }
 
+function findPressable(node, label) {
+  if (!node || typeof node !== 'object') return;
+  if (node.type === 'Pressable' && textContent(node).includes(label)) return node;
+  for (const child of [node.props?.children].flat(Infinity)) {
+    const found = findPressable(child, label);
+    if (found) return found;
+  }
+}
+
 function textContent(node) {
   if (node == null || typeof node === 'boolean') return '';
   if (typeof node === 'string' || typeof node === 'number') return String(node);
@@ -22,12 +31,13 @@ function textContent(node) {
 
 function sessionHarness(t, options = {}) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: Infinity } } });
-  const night = { id: 'night-1', title: 'Session', participantCount: 0, capacity: 10, status: options.status ?? 'PUBLISHED' };
+  const night = { id: 'night-1', createdBy: 'organizer-1', title: 'Session', participantCount: 0, capacity: 10, status: options.status ?? 'PUBLISHED' };
   let participants = [];
   let selected = ['player-2'];
   let current;
   let mutation;
   let rendering;
+  const publishCalls = [];
   const mutations = new Map();
   const api = {
     nights: async () => [{ ...night, participantCount: participants.length }],
@@ -40,9 +50,16 @@ function sessionHarness(t, options = {}) {
       if (options.removeError) throw options.removeError;
       participants = participants.filter((p) => p.playerId !== playerId);
     },
+    publishNight: async (id) => {
+      publishCalls.push(id);
+      if (options.publishGate) await options.publishGate;
+      if (options.publishError) throw options.publishError;
+      night.status = 'PUBLISHED';
+      return { ...night };
+    },
   };
   client.setQueryData(['nights'], [night]);
-  client.setQueryData(['me'], { role: options.role ?? 'ORGANIZER' });
+  client.setQueryData(['me'], { id: options.actorId ?? 'organizer-1', role: options.role ?? 'ORGANIZER' });
   client.setQueryData(['roster', night.id], []);
   client.setQueryData(['users', ''], [{ id: 'player-2', displayName: 'Merve' }]);
   const observers = [
@@ -96,8 +113,8 @@ function sessionHarness(t, options = {}) {
     assert.ok(name in modules, `Unexpected component dependency: ${name}`);
     return modules[name];
   } };
-  vm.runInNewContext(`${compiled}\nexports.components = { NightsList, NightDetails, RegistrationManager, ParticipantManager };`, context);
-  const { NightsList, NightDetails, RegistrationManager, ParticipantManager } = context.exports.components;
+  vm.runInNewContext(`${compiled}\nexports.components = { NightsList, NightDetails, RegistrationManager, ParticipantManager, AttendanceManager };`, context);
+  const { NightsList, NightDetails, RegistrationManager, ParticipantManager, AttendanceManager } = context.exports.components;
   const render = (component, props) => {
     rendering = component.name;
     return component(props);
@@ -110,6 +127,7 @@ function sessionHarness(t, options = {}) {
   return {
     client,
     details,
+    attendanceUI: () => render(AttendanceManager, findElement(details(), 'AttendanceManager').props),
     registrationUI: () => render(RegistrationManager, findElement(details(), 'RegistrationManager').props),
     async register() {
       render(RegistrationManager, findElement(details(), 'RegistrationManager').props);
@@ -121,6 +139,9 @@ function sessionHarness(t, options = {}) {
       await mutation.mutate('player-2');
       await new Promise(setImmediate);
     },
+    publishAction: () => findPressable(details(), 'night.publish'),
+    publishCalls,
+    get night() { return night; },
     participantsUI: () => render(ParticipantManager, findElement(details(), 'ParticipantManager').props),
     participantsText: () => textContent(render(ParticipantManager, findElement(details(), 'ParticipantManager').props)),
   };
@@ -184,4 +205,70 @@ test('completed sessions do not expose registration management or removal', (t) 
   session.client.setQueryData(['roster', 'night-1'], [{ playerId: 'player-2', displayName: 'Merve', status: 'ATTENDED' }]);
   assert.equal(findElement(session.details(), 'RegistrationManager'), undefined);
   assert.doesNotMatch(session.participantsText(), /night.remove/);
+});
+
+test('attendance completion controls appear near the top of game-night details', (t) => {
+  const session = sessionHarness(t);
+  const details = session.details();
+  const sections = details.props.children;
+  const attendanceIndex = sections.findIndex((section) => section?.type?.name === 'AttendanceManager');
+  const summaryIndex = sections.findIndex((section) => section?.type?.name === 'NightCard');
+  assert.ok(attendanceIndex > 0);
+  assert.ok(attendanceIndex < summaryIndex);
+});
+
+test('the published owner-organiser details page renders the Complete session button', (t) => {
+  const session = sessionHarness(t);
+  assert.match(textContent(session.attendanceUI()), /attendance\.complete/);
+});
+
+test('an admin sees the Complete session button for a published game night', (t) => {
+  const session = sessionHarness(t, { role: 'ADMIN' });
+  assert.match(textContent(session.attendanceUI()), /attendance\.complete/);
+});
+
+test('draft owner-organiser details expose a Publish session button', (t) => {
+  const session = sessionHarness(t, { status: 'DRAFT' });
+  const publish = session.publishAction();
+  assert.ok(publish, 'Draft details should expose the Publish session action');
+});
+
+test('admins can publish a draft and the details transition to published', async (t) => {
+  const session = sessionHarness(t, { status: 'DRAFT', role: 'ADMIN' });
+  const publish = session.publishAction();
+  assert.ok(publish);
+  await publish.props.onPress();
+  assert.deepEqual(session.publishCalls, ['night-1']);
+  assert.equal(session.night.status, 'PUBLISHED');
+  assert.equal(findElement(session.details(), 'AttendanceManager').props.night.status, 'PUBLISHED');
+  assert.match(textContent(session.attendanceUI()), /attendance\.complete/);
+});
+
+test("a non-owner organiser cannot publish another organiser's draft", (t) => {
+  const session = sessionHarness(t, { status: 'DRAFT', actorId: 'organizer-2' });
+  assert.equal(session.publishAction(), undefined);
+});
+
+test('members cannot publish a draft', (t) => {
+  const session = sessionHarness(t, { status: 'DRAFT', role: 'MEMBER' });
+  assert.equal(session.publishAction(), undefined);
+});
+
+test('the Publish session button is disabled while the request is pending', async (t) => {
+  let resolvePublish;
+  const publishGate = new Promise((resolve) => { resolvePublish = resolve; });
+  const session = sessionHarness(t, { status: 'DRAFT', publishGate });
+  const pending = session.publishAction().props.onPress();
+  assert.equal(findPressable(session.details(), 'common.working').props.disabled, true);
+  resolvePublish();
+  await pending;
+});
+
+test('publish failures remain visible and the action can be retried', async (t) => {
+  const session = sessionHarness(t, { status: 'DRAFT', publishError: new Error('Only draft game nights can be published') });
+  const publish = session.publishAction();
+  assert.ok(publish);
+  await assert.rejects(publish.props.onPress(), /Only draft game nights can be published/);
+  assert.match(textContent(session.details()), /Only draft game nights can be published/);
+  assert.ok(session.publishAction());
 });

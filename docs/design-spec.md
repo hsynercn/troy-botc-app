@@ -13,9 +13,11 @@
 
 ## API contract
 
-The app targets `/v1/me`, `/v1/game-nights`, `/v1/game-nights/{id}`, `/v1/game-nights/{id}/registrations`, `/v1/game-nights/{id}/roster`, `/v1/game-nights/{id}/attendance`, `/v1/users/search`, `/v1/leaderboard`, `/v1/admin/rank-policy`, and `/v1/players/{playerId}/role`.
+The app targets `/v1/me`, `/v1/game-nights`, `/v1/game-nights/{id}`, `/v1/game-nights/{id}/publish`, `/v1/game-nights/{id}/registrations`, `/v1/game-nights/{id}/roster`, `/v1/game-nights/{id}/attendance`, `/v1/users/search`, `/v1/leaderboard`, `/v1/admin/rank-policy`, and `/v1/players/{playerId}/role`.
 
 Admins and organizers create sessions and manually register active users selected from the protected global user set. Members have read-only session and roster views; they do not RSVP or remove themselves. Registration is not attendance.
+
+Attendance is finalized from game-night details by an admin or the game-night's owner organiser while the night is `PUBLISHED`, without a scheduled-time gate. The organizer must explicitly mark every non-cancelled roster entry `ATTENDED` or `NO_SHOW`; cancelled entries are excluded and no status is preselected. One submission to `POST /v1/game-nights/{id}/attendance` records the decisions and completes the night, including when the eligible roster is empty. This is one user/API submission, not an all-or-nothing database transaction: if a request fails after some decisions persist, the app refreshes the roster and preserves the choices for retry. Only `ATTENDED` contributes to a user's attended-game count. On a `COMPLETED` night, only admins may correct attendance from the details screen; the night remains completed and the count reflects the corrected status. The API is authoritative for ownership and role checks.
 
 The Game nights screen exposes **Create session** to organizers and admins,
 including when the list is empty. The form submits `POST /v1/game-nights`
@@ -28,6 +30,13 @@ Start time defaults to the time the form opens, and end time to four hours
 later, both expressed as UTC ISO timestamps. The defaults remain editable;
 the optional end time can be cleared before creation.
 This uses the existing API contract; no backend rollout or migration is needed.
+
+The owner organiser or an admin can publish a draft from its details screen.
+The app calls `POST /v1/game-nights/{id}/publish` with the Firebase bearer
+token, then refreshes the game-night list and updates the open details to
+`PUBLISHED`. Publishing reveals the attendance controls; drafts cannot be
+completed directly. The API remains authoritative for ownership, role, and
+draft-state validation.
 
 Roster entries include the participant's current `displayName` alongside the existing participation fields. The participants list displays that name; `playerId` remains the stable key for removal and attendance operations. Deploy the additive API field before rolling out the client.
 
