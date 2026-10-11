@@ -7,12 +7,27 @@
 - Explicit demo mode is available for UI development; API failures are not silently mocked.
 - Rank is based only on organizer-confirmed attendance.
 - Backend permissions remain authoritative for organizer and admin actions.
+- The authenticated shell fills the viewport, with content in a bounded
+  ScrollView and navigation outside it so long pages remain scrollable on
+  desktop and mobile browsers. Login retains its separate layout.
 
 ## API contract
 
 The app targets `/v1/me`, `/v1/game-nights`, `/v1/game-nights/{id}`, `/v1/game-nights/{id}/registrations`, `/v1/game-nights/{id}/roster`, `/v1/game-nights/{id}/attendance`, `/v1/users/search`, `/v1/leaderboard`, `/v1/admin/rank-policy`, and `/v1/players/{playerId}/role`.
 
 Admins and organizers create sessions and manually register active users selected from the protected global user set. Members have read-only session and roster views; they do not RSVP or remove themselves. Registration is not attendance.
+
+The Game nights screen exposes **Create session** to organizers and admins,
+including when the list is empty. The form submits `POST /v1/game-nights`
+with the Firebase bearer token and opens the created session's details while
+refreshing the shared session list. Sessions start as private `DRAFT`s, visible
+only to their creator and admins; creation does not publish them. End time,
+address, and notes are optional. Dates must include a timezone, capacity is an
+integer from 1 to 500, and validation/API failures retain the form for retry.
+Start time defaults to the time the form opens, and end time to four hours
+later, both expressed as UTC ISO timestamps. The defaults remain editable;
+the optional end time can be cleared before creation.
+This uses the existing API contract; no backend rollout or migration is needed.
 
 Roster entries include the participant's current `displayName` alongside the existing participation fields. The participants list displays that name; `playerId` remains the stable key for removal and attendance operations. Deploy the additive API field before rolling out the client.
 

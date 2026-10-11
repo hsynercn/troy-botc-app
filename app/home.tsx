@@ -45,10 +45,50 @@ function RegistrationManager({ night, onRefresh }: { night: GameNight; onRefresh
 }
 function SessionEditor({ night, onSaved }: { night: GameNight; onSaved: (night: GameNight) => void }) {
 	const { t } = useLanguage();
-	const [form, setForm] = useState({ title: night.title, startsAt: night.startsAt, endsAt: night.endsAt, venueName: night.venueName, venueAddress: night.venueAddress, notes: night.notes, capacity: String(night.capacity) });
-	const mutation = useMutation({ mutationFn: () => api.updateNight(night.id, { ...form, capacity: Number(form.capacity) }), onSuccess: onSaved });
+	const [form, setForm] = useState({ title: night.title, startsAt: night.startsAt, endsAt: night.endsAt ?? '', venueName: night.venueName, venueAddress: night.venueAddress ?? '', notes: night.notes ?? '', capacity: String(night.capacity) });
+	const mutation = useMutation({ mutationFn: () => {
+		if (night.endsAt && !form.endsAt.trim()) throw new Error(t('night.cannotClearEnd'));
+		return api.updateNight(night.id, { ...form, endsAt: form.endsAt.trim() || null, capacity: Number(form.capacity) });
+	}, onSuccess: onSaved });
 	const field = (key: keyof typeof form, placeholder: string, multiline = false) => <TextInput value={form[key]} onChangeText={(value) => setForm((current) => ({ ...current, [key]: value }))} placeholder={placeholder} multiline={multiline} style={{ borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 11, marginTop: 10, minHeight: multiline ? 70 : undefined, textAlignVertical: multiline ? 'top' : 'center' }} />;
-	return <View style={[styles.card, { marginTop: 14 }]}><Text style={{ color: colors.ink, fontWeight: '800', fontSize: 17 }}>{t('night.edit')}</Text>{field('title', 'Session title')}{field('startsAt', 'Start time (ISO, e.g. 2026-10-17T16:00:00Z)')}{field('endsAt', 'End time (ISO)')}{field('venueName', 'Venue name')}{field('venueAddress', 'Venue address')}{field('capacity', 'Capacity')}{field('notes', 'Notes', true)}<Pressable disabled={mutation.isPending} onPress={() => mutation.mutate()} style={[styles.button, { marginTop: 12 }, mutation.isPending && { opacity: 0.6 }]}><Text style={styles.buttonText}>{mutation.isPending ? t('common.working') : t('night.save')}</Text></Pressable></View>;
+	return <View style={[styles.card, { marginTop: 14 }]}><Text style={{ color: colors.ink, fontWeight: '800', fontSize: 17 }}>{t('night.edit')}</Text>{field('title', 'Session title')}{field('startsAt', 'Start time (ISO, e.g. 2026-10-17T16:00:00Z)')}{field('endsAt', 'End time (ISO)')}{field('venueName', 'Venue name')}{field('venueAddress', 'Venue address')}{field('capacity', 'Capacity')}{field('notes', 'Notes', true)}{mutation.isError ? <Text accessibilityRole="alert" style={{ color: colors.red, marginTop: 10 }}>{mutation.error.message}</Text> : null}<Pressable disabled={mutation.isPending} onPress={() => mutation.mutate()} style={[styles.button, { marginTop: 12 }, mutation.isPending && { opacity: 0.6 }]}><Text style={styles.buttonText}>{mutation.isPending ? t('common.working') : t('night.save')}</Text></Pressable></View>;
+}
+function SessionCreator({ onCreated, onCancel }: { onCreated: (night: GameNight) => Promise<void>; onCancel: () => void }) {
+	const { t } = useLanguage();
+	const [form, setForm] = useState(() => {
+		const start = new Date();
+		const end = new Date(start.getTime() + 4 * 60 * 60 * 1000);
+		return { title: '', startsAt: start.toISOString(), endsAt: end.toISOString(), venueName: '', venueAddress: '', notes: '', capacity: '15' };
+	});
+	const mutation = useMutation({
+		mutationFn: () => {
+			const title = form.title.trim();
+			const venueName = form.venueName.trim();
+			const startsAt = form.startsAt.trim();
+			const endsAt = form.endsAt.trim();
+			const capacity = Number(form.capacity);
+			const validTime = (value: string) => /^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d{1,3})?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/.test(value) && Number.isFinite(Date.parse(value)) && new Date(`${value.slice(0, 10)}T00:00:00Z`).toISOString().slice(0, 10) === value.slice(0, 10);
+			if (!title || title.length > 120 || !venueName || venueName.length > 200) throw new Error(t('night.invalidDetails'));
+			if (!validTime(startsAt) || (endsAt && (!validTime(endsAt) || Date.parse(endsAt) <= Date.parse(startsAt)))) throw new Error(t('night.invalidTimes'));
+			if (!Number.isInteger(capacity) || capacity < 1 || capacity > 500) throw new Error(t('night.invalidCapacity'));
+			return api.createNight({ title, startsAt: new Date(startsAt).toISOString(), endsAt: endsAt ? new Date(endsAt).toISOString() : null, venueName, venueAddress: form.venueAddress.trim() || null, notes: form.notes.trim() || null, capacity });
+		},
+		onSuccess: onCreated,
+	});
+	const field = (key: keyof typeof form, label: string, multiline = false) => <View key={key} style={{ marginTop: 12 }}>
+		<Text style={{ color: colors.ink, fontWeight: '700' }}>{label}</Text>
+		<TextInput accessibilityLabel={label} value={form[key]} onChangeText={(value) => setForm((current) => ({ ...current, [key]: value }))} editable={!mutation.isPending} keyboardType={key === 'capacity' ? 'number-pad' : 'default'} autoCapitalize="none" multiline={multiline} style={{ borderWidth: 1, borderColor: colors.line, borderRadius: 10, padding: 11, marginTop: 6, minHeight: multiline ? 70 : undefined, textAlignVertical: multiline ? 'top' : 'center' }} />
+	</View>;
+	return <View style={[styles.card, { marginBottom: 14 }]}>
+		<Text style={{ color: colors.ink, fontWeight: '800', fontSize: 20 }}>{t('night.create')}</Text>
+		<Text style={[styles.subtitle, { marginTop: 8 }]}>{t('night.draftHelp')}</Text>
+		{field('title', t('night.title'))}{field('startsAt', t('night.startsAt'))}{field('endsAt', t('night.endsAt'))}
+		<Text style={[styles.subtitle, { marginTop: 6 }]}>{t('night.timeHelp')}</Text>
+		{field('venueName', t('night.venueName'))}{field('venueAddress', t('night.venueAddress'))}{field('capacity', t('night.capacity'))}{field('notes', t('night.notes'), true)}
+		{mutation.isError ? <Text accessibilityRole="alert" style={{ color: colors.red, marginTop: 12 }}>{mutation.error.message}</Text> : null}
+		<Pressable accessibilityRole="button" disabled={mutation.isPending} onPress={() => mutation.mutate()} style={[styles.button, { marginTop: 16 }, mutation.isPending && { opacity: 0.6 }]}><Text style={styles.buttonText}>{mutation.isPending ? t('common.working') : t('night.createDraft')}</Text></Pressable>
+		<Pressable accessibilityRole="button" disabled={mutation.isPending} onPress={onCancel} style={{ marginTop: 14, padding: 8, alignItems: 'center' }}><Text style={{ color: colors.green, fontWeight: '800' }}>{t('common.cancel')}</Text></Pressable>
+	</View>;
 }
 function ParticipantManager({ night, canManage, onRefresh }: { night: GameNight; canManage: boolean; onRefresh: () => Promise<unknown> }) {
 	const { t } = useLanguage();
@@ -88,10 +128,35 @@ export default function Home() {
 	if (!authReady || (!authenticated && !process.env.EXPO_PUBLIC_DEMO_MODE)) return <SafeAreaView style={styles.page}><View style={[styles.shell, { flex: 1, justifyContent: 'center', alignItems: 'center' }]}><ActivityIndicator color={colors.green} size="large" /></View></SafeAreaView>;
 	const enabled = authenticated || process.env.EXPO_PUBLIC_DEMO_MODE === 'true';
 	const logout = async () => { await signOut(auth); router.replace('/login'); };
-	return <SafeAreaView style={styles.page}><View style={[styles.shell, { paddingHorizontal: compact ? 16 : 28, paddingVertical: compact ? 16 : 24 }]}>
+	return <SafeAreaView style={styles.page}><View style={[styles.shell, { flex: 1, minHeight: 0, paddingHorizontal: compact ? 16 : 28, paddingVertical: compact ? 16 : 24 }]}>
 		<View style={[styles.between, { marginBottom: compact ? 16 : 22 }]}><Text style={{ color: colors.green, fontSize: compact ? 18 : 20, fontWeight: '900', letterSpacing: 1 }}>TROY / BOTC</Text><View style={[styles.row, { gap: compact ? 10 : 14 }]}><LanguageSwitcher /><Pressable onPress={logout} accessibilityRole="button" hitSlop={8}><Text style={{ color: colors.red, fontWeight: '800', fontSize: compact ? 12 : 14 }}>{compact ? '↪' : t('nav.logout')}</Text></Pressable></View></View>
 		<ScrollView contentContainerStyle={{ paddingBottom: 100 }} keyboardShouldPersistTaps="handled">{tab === 'home' && <Overview go={setTab} enabled={enabled} />}{tab === 'nights' && <><Text style={styles.eyebrow}>{t('home.findTable')}</Text><Text style={[styles.title, { marginTop: 7, marginBottom: 20, fontSize: compact ? 30 : 34 }]}>{t('nav.nights')}</Text><NightsList /></>}{tab === 'leaderboard' && <Leaderboard />}{tab === 'profile' && <Profile enabled={enabled} />}</ScrollView>
 		<View style={[styles.row, { backgroundColor: colors.white, borderWidth: 1, borderColor: colors.line, borderRadius: 18, padding: compact ? 4 : 6, justifyContent: 'space-around' }]}>{tabs.map(([key, label, icon]) => <Pressable key={key} onPress={() => setTab(key)} accessibilityRole="tab" style={{ flex: 1, minHeight: 52, padding: compact ? 6 : 10, alignItems: 'center', justifyContent: 'center' }}><Text style={{ color: tab === key ? colors.green : colors.muted, fontSize: compact ? 18 : 12, fontWeight: '800' }}>{compact ? icon : label}</Text>{compact && <Text numberOfLines={1} adjustsFontSizeToFit style={{ color: tab === key ? colors.green : colors.muted, fontSize: 10, fontWeight: '800', marginTop: 2 }}>{label}</Text>}</Pressable>)}</View>
 	</View></SafeAreaView>;
 }
-function NightsList() { const queryClient = useQueryClient(); const query = useQuery({ queryKey: ['nights'], queryFn: () => api.nights() }); const player = useQuery({ queryKey: ['me'], queryFn: () => api.me() }); const [selectedId, setSelectedId] = useState<string | null>(null); if (query.isLoading || player.isLoading) return <ActivityIndicator color={colors.green} />; const canManage = player.data?.role === 'ORGANIZER' || player.data?.role === 'ADMIN'; const selected = query.data!.find((night) => night.id === selectedId); if (selected) return <NightDetails night={selected} canManage={canManage} onBack={() => setSelectedId(null)} onRefresh={() => Promise.all([queryClient.invalidateQueries({ queryKey: ['nights'] }), queryClient.invalidateQueries({ queryKey: ['roster', selected.id] })])} />; return <>{query.data!.map((night) => <View key={night.id}><NightCard night={night} onDetails={() => setSelectedId(night.id)} onRefresh={() => queryClient.invalidateQueries({ queryKey: ['nights'] })} /></View>)}</>; }
+function NightsList() {
+	const { t } = useLanguage();
+	const queryClient = useQueryClient();
+	const query = useQuery({ queryKey: ['nights'], queryFn: () => api.nights() });
+	const player = useQuery({ queryKey: ['me'], queryFn: () => api.me() });
+	const [selectedId, setSelectedId] = useState<string | null>(null);
+	const [createdNight, setCreatedNight] = useState<GameNight | null>(null);
+	const [creating, setCreating] = useState(false);
+	if (query.isLoading || player.isLoading) return <ActivityIndicator color={colors.green} />;
+	if (query.isError || player.isError) return <ErrorState error={query.error ?? player.error} />;
+	const canManage = player.data?.role === 'ORGANIZER' || player.data?.role === 'ADMIN';
+	if (creating && canManage) return <SessionCreator onCancel={() => setCreating(false)} onCreated={async (night) => {
+		queryClient.setQueryData<GameNight[]>(['nights'], (current: GameNight[] | undefined) => [...(current ?? []).filter((item) => item.id !== night.id), night].sort((a, b) => a.startsAt.localeCompare(b.startsAt)));
+		setCreatedNight(night);
+		setSelectedId(night.id);
+		setCreating(false);
+		await queryClient.invalidateQueries({ queryKey: ['nights'] });
+	}} />;
+	const selected = query.data!.find((night) => night.id === selectedId) ?? (createdNight?.id === selectedId ? createdNight : null);
+	if (selected) return <NightDetails night={selected} canManage={canManage} onBack={() => { setSelectedId(null); setCreatedNight(null); }} onRefresh={() => Promise.all([queryClient.invalidateQueries({ queryKey: ['nights'] }), queryClient.invalidateQueries({ queryKey: ['roster', selected.id] })])} />;
+	return <>
+		{canManage ? <Pressable accessibilityRole="button" onPress={() => setCreating(true)} style={[styles.button, { marginBottom: 20 }]}><Text style={styles.buttonText}>{t('night.create')}</Text></Pressable> : null}
+		{query.data!.length === 0 ? <Text style={[styles.subtitle, { marginBottom: 14 }]}>{t('night.empty')}</Text> : null}
+		{query.data!.map((night) => <View key={night.id}><NightCard night={night} onDetails={() => setSelectedId(night.id)} onRefresh={() => queryClient.invalidateQueries({ queryKey: ['nights'] })} /></View>)}
+	</>;
+}
