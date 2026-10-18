@@ -8,7 +8,8 @@ if (!fs.existsSync(index)) {
   throw new Error('Expo web export did not create dist/index.html');
 }
 
-for (const route of ['home', 'login']) {
+// Static aliases are a convenience; arbitrary IDs require the SPA hosting rewrite.
+for (const route of ['home', 'login', 'home/login', 'game-nights', 'leaderboard', 'profile']) {
   const routeDirectory = path.join(dist, route);
   fs.mkdirSync(routeDirectory, { recursive: true });
   fs.copyFileSync(index, path.join(routeDirectory, 'index.html'));

@@ -32,6 +32,7 @@ function harness(t, options = {}) {
   const state = new Map();
   const mutations = new Map();
   const calls = [];
+  const routes = [];
   let component;
   let slot;
   let observer;
@@ -57,7 +58,7 @@ function harness(t, options = {}) {
     },
     'react/jsx-runtime': require('react/jsx-runtime'),
     'react-native': { View: 'View', Text: 'Text', TextInput: 'TextInput', Pressable: 'Pressable', ActivityIndicator: 'ActivityIndicator' },
-    'expo-router': {},
+    'expo-router': { useRouter: () => ({ push: (path) => routes.push(path) }), useNavigation: () => ({}) },
     '@tanstack/react-query': {
       useQueryClient: () => client,
       useQuery: ({ queryKey }) => ({ data: client.getQueryData(queryKey), isError: false, isLoading: false }),
@@ -68,6 +69,7 @@ function harness(t, options = {}) {
         return { ...observer.getCurrentResult(), mutate: () => observer.mutate() };
       },
     },
+    ...require('./routing-helpers.cjs').homeModules,
     '@/src/api': { api },
     '@/src/firebase': {},
     '@/src/styles': { colors: {}, styles: {} },
@@ -89,7 +91,7 @@ function harness(t, options = {}) {
     ['title', 'startsAt', 'endsAt', 'venueName', 'venueAddress', 'capacity', 'notes'].forEach((key, index) => inputs[index].props.onChangeText(values[key]));
     return render('SessionCreator', props);
   };
-  return { list, open, fill, calls, created, client, render, submit: () => observer.mutate() };
+  return { list, open, fill, calls, routes, created, client, render, submit: () => observer.mutate() };
 }
 
 test('organizers and admins can create a session from an empty list; members cannot', (t) => {
@@ -141,8 +143,8 @@ test('creation normalizes fields, caches the draft, refreshes the list and opens
     title: 'Friday game', startsAt: '2030-01-01T15:00:00.000Z', endsAt: null,
     venueName: 'Club', venueAddress: null, notes: null, capacity: 15,
   });
-  assert.equal(session.list().type.name, 'NightDetails');
-  assert.equal(session.list().props.night.id, 'new-night');
+  assert.deepEqual(session.routes, ['/game-nights/new-night']);
+  assert.equal(session.client.getQueryData(['night', 'new-night']).id, 'new-night');
   assert.equal(session.client.getQueryState(['nights']).isInvalidated, true);
 });
 
@@ -158,9 +160,8 @@ test('a stale post-create list response does not discard the confirmed draft det
   session.fill(session.open());
   await session.submit();
   session.client.setQueryData(['nights'], []);
-  assert.equal(session.list().type.name, 'NightDetails');
-  assert.equal(session.list().props.night.id, session.created.id);
-  session.list().props.onBack();
+  assert.deepEqual(session.routes, ['/game-nights/new-night']);
+  assert.equal(session.client.getQueryData(['night', 'new-night']).id, session.created.id);
   assert.equal(nodes(session.list()).filter((node) => node.type === 'Pressable').length, 1);
 });
 

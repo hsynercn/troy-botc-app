@@ -11,10 +11,8 @@ frontend:
     baseDirectory: dist
     files:
       - '**/*'
-  customRules:
-    - source: '/<*>'
-      target: '/index.html'
-      status: '200'
+  # Hosting rewrites are an Amplify app setting, not a buildspec field.
+  # Apply amplify-rewrites.json in Hosting > Rewrites and redirects before release.
   cache:
     paths:
       - node_modules/**/*

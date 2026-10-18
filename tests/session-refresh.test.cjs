@@ -40,6 +40,7 @@ function sessionHarness(t, options = {}) {
   const publishCalls = [];
   const mutations = new Map();
   const api = {
+    night: async () => ({ ...night, participantCount: participants.length }),
     nights: async () => [{ ...night, participantCount: participants.length }],
     roster: async () => participants.map((participant) => ({ ...participant })),
     register: async () => {
@@ -59,10 +60,12 @@ function sessionHarness(t, options = {}) {
     },
   };
   client.setQueryData(['nights'], [night]);
+  client.setQueryData(['night', night.id], night);
   client.setQueryData(['me'], { id: options.actorId ?? 'organizer-1', role: options.role ?? 'ORGANIZER' });
   client.setQueryData(['roster', night.id], []);
   client.setQueryData(['users', ''], [{ id: 'player-2', displayName: 'Merve' }]);
   const observers = [
+    new QueryObserver(client, { queryKey: ['night', night.id], queryFn: api.night }),
     new QueryObserver(client, { queryKey: ['nights'], queryFn: api.nights }),
     new QueryObserver(client, { queryKey: ['roster', night.id], queryFn: api.roster }),
   ];
@@ -83,7 +86,7 @@ function sessionHarness(t, options = {}) {
     },
     'react/jsx-runtime': require('react/jsx-runtime'),
     'react-native': { View: 'View', Text: 'Text', Pressable: 'Pressable', TextInput: 'TextInput', ActivityIndicator: 'ActivityIndicator' },
-    'expo-router': { useRouter: () => ({}) },
+    'expo-router': { useRouter: () => ({}), useNavigation: () => ({}) },
     '@tanstack/react-query': {
       useQueryClient: () => client,
       useQuery: (options) => ({
@@ -101,7 +104,8 @@ function sessionHarness(t, options = {}) {
         return { ...mutation.getCurrentResult(), mutate: (variables) => mutation.mutate(variables) };
       },
     },
-    '@/src/api': { api },
+    ...require('./routing-helpers.cjs').homeModules,
+    '@/src/api': { api, DEMO_MODE: true },
     '@/src/firebase': {},
     '@/src/styles': { styles: {}, colors: {} },
     '@/src/i18n': { useLanguage: () => ({ t: (key) => key }) },
@@ -113,14 +117,14 @@ function sessionHarness(t, options = {}) {
     assert.ok(name in modules, `Unexpected component dependency: ${name}`);
     return modules[name];
   } };
-  vm.runInNewContext(`${compiled}\nexports.components = { NightsList, NightDetails, RegistrationManager, ParticipantManager, AttendanceManager };`, context);
-  const { NightsList, NightDetails, RegistrationManager, ParticipantManager, AttendanceManager } = context.exports.components;
+  vm.runInNewContext(`${compiled}\nexports.components = { NightRoute, NightDetails, RegistrationManager, ParticipantManager, AttendanceManager };`, context);
+  const { NightRoute, NightDetails, RegistrationManager, ParticipantManager, AttendanceManager } = context.exports.components;
   const render = (component, props) => {
     rendering = component.name;
     return component(props);
   };
   const details = () => {
-    const props = NightsList().props;
+    const props = NightRoute({ id: night.id }).props;
     NightDetails(props);
     return NightDetails(props);
   };

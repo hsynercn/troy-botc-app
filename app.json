@@ -4,7 +4,7 @@
     "slug": "troy-botc",
     "version": "1.0.0",
     "scheme": "troybotc",
-    "web": { "bundler": "metro" },
+    "web": { "bundler": "metro", "output": "single" },
     "plugins": ["expo-router"]
   }
 }

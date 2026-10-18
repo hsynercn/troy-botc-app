@@ -50,7 +50,9 @@ async function demoRequest<T>(path: string, options: RequestInit): Promise<T> {
   if (path === '/v1/me') return demoPlayer as T;
   if (path.match(/^\/v1\/game-nights\/[^/]+$/) && options.method !== 'PATCH') {
     const id = path.split('/').pop()!;
-    return demoNights.find((night) => night.id === id) as T;
+    const night = demoNights.find((night) => night.id === id);
+    if (!night) throw new ApiError(404, 'Game night not found');
+    return { ...night } as T;
   }
   if (path === '/v1/game-nights' && options.method === 'POST') {
     const input = JSON.parse(String(options.body)) as GameNightCreate;

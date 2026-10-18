@@ -93,6 +93,7 @@ function harness(t, options = {}) {
         };
       },
     },
+    ...require('./routing-helpers.cjs').homeModules,
     '@/src/api': { api },
     '@/src/firebase': {},
     '@/src/styles': { styles: {}, colors: {} },

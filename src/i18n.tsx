@@ -11,6 +11,10 @@ type TranslationKey = keyof typeof translations.en;
 type Translator = (key: TranslationKey, values?: Record<string, string | number>) => string;
 const translations = {
   en: {
+    'route.notFound': 'Page not found', 'route.unknown': 'This address does not match an app page.',
+    'route.missing': 'Game night not found', 'route.denied': 'Access denied',
+    'route.loginRequired': 'Sign in to continue to the page you requested.',
+    'route.logoutFailed': 'Sign out failed. Please try again.',
     'language.english': 'English', 'language.turkish': 'Türkçe',
     'login.eyebrow': 'TROY BOTC · PRIVATE COMMUNITY', 'login.title': 'Gather. Play.\nRemember.',
     'login.subtitle': 'Your calm home for game sessions, registrations, and the stories you bring back to the table.',
@@ -42,6 +46,10 @@ const translations = {
     'error.load': 'The table could not be loaded', 'error.try': 'Please try again.', 'error.login': 'Return to login', 'error.retry': 'Try again',
   },
   tr: {
+    'route.notFound': 'Sayfa bulunamadı', 'route.unknown': 'Bu adres bir uygulama sayfasıyla eşleşmiyor.',
+    'route.missing': 'Oyun gecesi bulunamadı', 'route.denied': 'Erişim reddedildi',
+    'route.loginRequired': 'İstediğiniz sayfaya devam etmek için giriş yapın.',
+    'route.logoutFailed': 'Çıkış yapılamadı. Lütfen tekrar deneyin.',
     'language.english': 'English', 'language.turkish': 'Türkçe',
     'login.eyebrow': 'TROY BOTC · ÖZEL TOPLULUK', 'login.title': 'Buluş. Oyna.\nHatırla.',
     'login.subtitle': 'Oyun geceleri, güvenilir katılım bildirimleri ve masaya taşıdığın hikâyeler için sakin yuvan.',

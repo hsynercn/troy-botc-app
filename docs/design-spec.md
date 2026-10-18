@@ -3,7 +3,7 @@
 ## Confirmed decisions
 
 - Expo React Native with a web-first responsive experience.
-- Firebase email-link authentication supplies the bearer token required by the API.
+- Firebase email/password and Google sign-in supply the bearer token required by the API.
 - Explicit demo mode is available for UI development; API failures are not silently mocked.
 - Rank is based only on organizer-confirmed attendance.
 - Backend permissions remain authoritative for organizer and admin actions.
@@ -11,7 +11,50 @@
   ScrollView and navigation outside it so long pages remain scrollable on
   desktop and mobile browsers. Login retains its separate layout.
 
-## API contract
+## Client navigation
+
+Canonical shared web/native routes are `/home`, `/game-nights`,
+`/game-nights/{id}`, `/leaderboard`, `/profile`, and `/login`. `/` replaces
+itself with Home or Login only after Firebase's initial auth callback.
+The existing `/home` and `/login` addresses remain valid; `/home/login` also
+replaces itself with canonical Login, preserving only a safe return destination.
+Section/detail
+navigation pushes; selecting the active section does nothing. Detail Back
+pops to a preceding Game nights list when present, otherwise pushes the list
+without leaving the app. Browser Back/Forward retain browser semantics.
+
+All product screens wait for auth readiness and allow the existing explicit
+`EXPO_PUBLIC_DEMO_MODE=true` bypass. Signed-out deep links replace themselves
+with `/login?returnTo=...`, explaining the sign-in requirement. The destination
+is restricted to canonical internal product paths (no query/hash/encoded
+separators). It survives login refresh in the URL, is consumed by a successful
+email/password or Google sign-in replacement, and is not persisted separately.
+Explicit sign-out replaces with plain Login and clears the query cache.
+
+A backend 401 offers an explicit reauthentication login, rather than silently
+bouncing a still-present Firebase user back to the failing product page.
+
+Details use the existing protected `GET /v1/game-nights/{id}`, not a list lookup.
+404 (including invisible private drafts) and malformed non-demo UUIDs show
+not-found without inferring permissions. Only explicit 403 shows access-denied;
+network/server failures offer retry and Home/list recovery. No API, bearer,
+CORS, schema, or environment contract changes are required.
+
+Creation/editing stay in place. Changed forms warn on app navigation, native
+back, and browser refresh/close where supported. No autosave, draft persistence,
+or URL encoding of forms/filters/sort/scroll is provided.
+
+Web export remains a client-rendered SPA. Before release, apply
+`amplify-rewrites.json` to the Amplify app's **Hosting > Rewrites and redirects**
+(or its `customRules` API setting), replacing any broad `/<*>` rewrite.
+Rewrites are not an `amplify.yml` buildspec setting. The rule serves arbitrary
+extensionless page/detail URLs from `index.html`, but excludes `_expo`, `assets`,
+and file-extension paths so missing JS/CSS/images are real 404s, not HTML.
+No live hosting settings are changed by this repository.
+`node scripts/serve-web-export.cjs [export-directory]` serves a production export
+locally with the same rule; static route copies alone do not cover arbitrary IDs.
+
+## API contract (existing)
 
 The app targets `/v1/me`, `/v1/game-nights`, `/v1/game-nights/{id}`, `/v1/game-nights/{id}/publish`, `/v1/game-nights/{id}/registrations`, `/v1/game-nights/{id}/roster`, `/v1/game-nights/{id}/attendance`, `/v1/users/search`, `/v1/leaderboard`, `/v1/admin/rank-policy`, and `/v1/players/{playerId}/role`.
 
